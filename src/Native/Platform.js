@@ -145,7 +145,7 @@ var effectManagers = {};
 
 function setupEffects(managers, callback)
 {
-	var ports;
+	var ports = {};
 
 	// setup all necessary effect managers
 	for (var key in effectManagers)
@@ -154,13 +154,16 @@ function setupEffects(managers, callback)
 
 		if (manager.isForeign)
 		{
-			ports = ports || {};
 			ports[key] = manager.tag === 'cmd'
 				? setupOutgoingPort(key)
 				: setupIncomingPort(key, callback);
 		}
 
 		managers[key] = makeManager(manager, callback);
+	}
+
+	for (var key in taskPortManagers) {
+		ports[key] = setupTaskPort(key);
 	}
 
 	return ports;
@@ -219,7 +222,6 @@ function sendToSelf(router, msg)
 		_0: msg
 	});
 }
-
 
 // HELPER for STATEFUL LOOPS
 
@@ -362,12 +364,14 @@ function insert(isCmd, newEffect, effects)
 
 function checkPortName(name)
 {
-	if (name in effectManagers)
+	if (name in effectManagers || name in taskPortManagers)
 	{
 		throw new Error('There can only be one port named `' + name + '`, but your program has multiple.');
 	}
 }
 
+// TASK PORTS
+var taskPortManagers = {};
 
 // OUTGOING PORTS
 
@@ -535,6 +539,47 @@ function setupIncomingPort(name, callback)
 	return { send: send };
 }
 
+// TASK PORTS
+function taskPort(name)
+{
+	checkPortName(name);
+	taskPortManagers[name] = {
+		handler: undefined
+	};
+
+	return function (outgoingValue) {
+		return _elm_lang$core$Native_Scheduler.nativeBinding(function (callback)
+		{
+			function portCallback(err, result)
+			{
+				if (err)
+				{
+					callback(_elm_lang$core$Native_Scheduler.fail(err));
+				}
+				else
+				{
+					callback(_elm_lang$core$Native_Scheduler.succeed(result));
+				}
+			}
+
+			if (!taskPortManagers[name].handler) {
+				throw new Error('No handler found for port "' + name + '"');
+			}
+			else
+			{
+				taskPortManagers[name].handler.call(undefined, outgoingValue, portCallback);
+			}
+		});
+	};
+}
+
+function setupTaskPort(name) {
+	function handle(handler) {
+		taskPortManagers[name].handler = handler;
+	}
+	return { handle: handle };
+}
+
 return {
 	// routers
 	sendToApp: F2(sendToApp),
@@ -544,6 +589,7 @@ return {
 	effectManagers: effectManagers,
 	outgoingPort: outgoingPort,
 	incomingPort: incomingPort,
+	taskPort: taskPort,
 
 	htmlToProgram: htmlToProgram,
 	program: program,
